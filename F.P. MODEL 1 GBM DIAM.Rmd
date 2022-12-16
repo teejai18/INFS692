@@ -1,0 +1,476 @@
+---
+title: "STAT 325 Model 1"
+author: "THEDION V. DIAM JR."
+date: "2022-12-14"
+output: html_document
+---
+# Load Data Sets
+The data contains 197 rows and 431 columns with *Failure.binary* binary output.
+```{r}
+rawd <- read.csv("C:/Users/redee/OneDrive/Desktop/STAT 325 Final Project/FP DATA.csv")
+```
+
+
+#=================================================== Reprocessing the Raw Data ===================================================#
+```{r}
+library(tidyverse)
+library(bestNormalize)
+```
+
+# Check for null and missing values
+Using *anyNA()* function, We can determine if any missing values in our data.
+```{r}
+anyNA(rawd)
+
+#The result shows either *True* or *False*. If True, omit the missing values using *na.omit()*
+  
+#[1] FALSE
+
+#Thus, our data has no missing values.
+```
+
+# Check for Normality of the Data
+We used *Shapiro-Wilk's Test* to check the normality of the data.
+
+```{r,warning=F}
+rd <- rawd%>%select_if(is.numeric) 
+rd <- rd[,-1]
+test <- apply(rd,2,function(x){shapiro.test(x)})
+```
+
+
+To have the list of p-value of all variables, the *unlist()* function is used and convert a list to vector.
+```{r}
+pvalue_list <- unlist(lapply(test, function(x) x$p.value))
+```
+
+
+```{r}
+sum(pvalue_list<0.05)  # not normally distributed
+sum(pvalue_list>0.05)  # normally distributed
+test$Entropy_cooc.W.ADC
+
+# [1] 428
+# [1] 1
+
+#  Thus, we have 428 variables that are not normally distributed and Entropy_cooc.W.ADC is normally distributed.
+```
+
+We use *orderNorm()* function, the *x.t*	is the elements of orderNorm() function transformed original data.Using the *Shapiro-Wilk's Test*
+```{r,warning=F}
+TRDrawd=rawd[,c(3,5:length(names(rawd)))]
+
+TRDrawd=apply(TRDrawd,2,orderNorm)
+TRDrawd=lapply(TRDrawd, function(x) x$x.t)
+TRDrawd=TRDrawd%>%as.data.frame()
+test=apply(TRDrawd,2,shapiro.test)
+test=unlist(lapply(test, function(x) x$p.value))
+```
+
+#Testing Data 
+```{r,warning=F}
+sum(test <0.05)  # not normally distributed
+sum(test >0.05)  # normally distributed
+
+#[1] 0
+#[1] 428
+
+# Thus, our data is normally distributed.
+```
+
+
+```{r}
+rawd[,c(3,5:length(names(rawd)))]=TRDrawd
+```
+
+Get the correlation of the whole data expect the categorical variables
+```{r}
+CorMatrix=cor(rawd[,-c(1,2)])
+heatmap(CorMatrix,Rowv=NA,Colv=NA,scale="none",revC = T)
+```
+
+#Splitting the Data
+Split the data into training (80%) and testing (20%).
+```{r}
+rawd$Institution=as.factor(rawd$Institution)
+rawd$Failure.binary=as.factor(rawd$Failure.binary)
+```
+
+```{r}
+splitter <- sample(1:nrow(rawd), round(nrow(rawd) * 0.8))
+trainND <- rawd[splitter, ]
+testND  <- rawd[-splitter, ]
+```
+
+The data frame output of data reprocessing will be converted into to "csv", which will be used for entire project.
+
+# Load new Data 
+```{r}
+Final<- read.csv("C:/Users/redee/OneDrive/Desktop/STAT 325 Final Project/newdat.csv")
+View(Final)
+```
+
+#=============================================GRADIENT BOOSTING===================================================================#
+
+```{r}
+# Helper packages
+library(dplyr)    # for general data wrangling needs
+library(tidyverse)
+library(rsample)
+library(ROCR)
+library(pROC)
+# Modeling packages
+library(gbm)      # for original implementation of regular and stochastic GBMs
+library(h2o)      # for a java-based implementation of GBM variants
+library(xgboost)  # for fitting extreme gradient boosting
+```
+
+```{r}
+set.seed(123)  # for reproducibility
+
+
+
+Final$Institution=as.factor(Final$Institution)
+split <- initial_split(Final, strata = "Failure.binary")
+trainFinal <- training(split)
+testFinal <- testing(split)
+```
+
+```{r}
+gradientBoostingModel_1 <- gbm(
+  formula = Failure.binary ~ .,
+  data = trainFinal,
+  distribution = "bernoulli",  # SSE loss function
+  n.trees = 1000,
+  shrinkage = 0.1,
+  n.minobsinnode = 10,
+  cv.folds = 10
+
+)
+```
+
+
+```{r}
+# find index for number trees with minimum CV error
+best <- which.min(gradientBoostingModel_1$cv.error)
+```
+
+```{r}
+# get MSE and compute RMSE
+sqrt(gradientBoostingModel_1$cv.error[best])
+```
+```{r}
+# plot error curve
+gbm.perf(gradientBoostingModel_1, method = "cv")
+```
+```{r}
+# create grid search
+hyper_grid <- expand.grid(
+  learning_rate = c(0.3, 0.1, 0.05, 0.01, 0.005),
+  logloss = NA,
+  trees = NA,
+  time = NA
+)
+
+# execute grid search
+for(i in seq_len(nrow(hyper_grid))) {
+  
+  # fit gbm
+  set.seed(123)  # for reproducibility
+  train_time <- system.time({
+    m <- gbm(
+      formula = Failure.binary ~ .,
+      data = trainFinal,
+      distribution = "bernoulli",
+      n.trees = 1000, 
+      shrinkage = hyper_grid$learning_rate[i], 
+      interaction.depth = 3, 
+      n.minobsinnode = 10,
+      cv.folds = 10 
+    )
+  })
+  
+  # add SSE, trees, and training time to results
+  hyper_grid$logloss[i]  <- sqrt(min(m$cv.error))
+  hyper_grid$trees[i] <- which.min(m$cv.error)
+  hyper_grid$Time[i]  <- train_time[["elapsed"]]
+  
+}
+```
+
+```{r}
+# results
+arrange(hyper_grid, logloss)
+```
+
+
+```{r}
+# search grid
+hyper_grid <- expand.grid(
+  n.trees = 1000,
+  shrinkage = 0.01,
+  interaction.depth = c(3, 5, 7),
+  n.minobsinnode = c(5, 10, 15)
+
+)
+```
+
+```{r}
+# create model fit function
+model_fit <- function(n.trees, shrinkage, interaction.depth, n.minobsinnode) {
+  set.seed(123)
+  m <- gbm(
+    formula = Failure.binary ~ .,
+    data = trainFinal,
+    distribution = "bernoulli",
+    n.trees = n.trees,
+    shrinkage = shrinkage,
+    interaction.depth = interaction.depth,
+    n.minobsinnode = n.minobsinnode,
+    cv.folds = 10
+  )
+  # compute RMSE
+  sqrt(min(m$cv.error))
+
+}
+```
+
+```{r}
+# perform search grid with functional programming
+hyper_grid$logloss <- purrr::pmap_dbl(
+  hyper_grid,
+  ~ model_fit(
+    n.trees = ..1,
+    shrinkage = ..2,
+    interaction.depth = ..3,
+    n.minobsinnode = ..4
+  )
+)
+
+# results
+arrange(hyper_grid, logloss)
+```
+```{r}
+# refined hyperparameter grid
+hyper_grid <- list(
+  sample_rate = c(0.5, 0.75, 1),              # row subsampling
+  col_sample_rate = c(0.5, 0.75, 1),          # col subsampling for each split
+  col_sample_rate_per_tree = c(0.5, 0.75, 1)  # col subsampling for each tree
+)
+
+# random grid search strategy
+search_criteria <- list(
+  strategy = "RandomDiscrete",
+  stopping_metric = "logloss",
+  stopping_tolerance = 0.001,   
+  stopping_rounds = 10,         
+  max_runtime_secs = 60*60      
+)
+```
+
+```{r}
+# perform grid search 
+trainFinal$Failure.binary=as.factor(trainFinal$Failure.binary)
+h2o.shutdown()
+h2o.init()
+grid <- h2o.grid(
+  algorithm = "gbm",
+  grid_id = "gbm_grid",
+  y = "Failure.binary",
+  training_frame = as.h2o(trainFinal),
+  hyper_params = hyper_grid,
+  ntrees = 10,#supposedly 6000
+  learn_rate = 0.01,
+  max_depth = 7,
+  min_rows = 5,
+  nfolds = 10,
+  stopping_rounds = 10,
+  stopping_tolerance = 0,
+  stopping_metric="logloss",
+  search_criteria = search_criteria,
+  seed = 123
+
+)
+```
+
+```{r}
+# collect the results and sort by our model performance metric of choice
+grid_perf <- h2o.getGrid(
+  grid_id = "gbm_grid", 
+  sort_by = "logloss", 
+  decreasing = FALSE
+)
+```
+
+```{r}
+grid_perf
+```
+```{r}
+# Grab the model_id for the top model, chosen by cross validation error
+best_model_id <- grid_perf@model_ids[[1]]
+best_model <- h2o.getModel(best_model_id)
+
+# Now let’s get performance metrics on the best model
+h2o.performance(model = best_model, xval = TRUE)
+```
+```{r}
+library(recipes)
+xgb_prep <- recipe(Failure.binary ~ ., data = trainFinal) %>%
+  step_integer(all_nominal()) %>%
+  prep(training = trainFinal, retain = TRUE) %>%
+  juice()
+
+X <- as.matrix(xgb_prep[setdiff(names(xgb_prep), "Failure.binary")])
+Y <- xgb_prep$Failure.binary
+Y=as.numeric(Y)-1
+```
+
+```{r}
+set.seed(123)
+ames_xgb <- xgb.cv(
+  data = X,
+  label = Y,
+  nrounds = 1000,
+  objective = "binary:logistic",
+  early_stopping_rounds = 50, 
+  nfold = 10,
+  params = list(
+    eta = 0.1,
+    max_depth = 3,
+    min_child_weight = 3,
+    subsample = 0.8,
+    colsample_bytree = 1.0),
+  verbose = 0
+)
+
+```
+
+```{r}
+# minimum test CV RMSE
+min(ames_xgb$evaluation_log$test_logloss_mean)
+```
+
+```{r}
+# hyperparameter grid
+hyper_grid <- expand.grid(
+  eta = 0.01,
+  max_depth = 3, 
+  min_child_weight = 3,
+  subsample = 0.5, 
+  colsample_bytree = 0.5,
+  gamma = c(0, 1, 10, 100, 1000),
+  lambda = c(0, 1e-2, 0.1, 1, 100, 1000, 10000),
+  alpha = c(0, 1e-2, 0.1, 1, 100, 1000, 10000),
+  logloss = 0,          # a place to dump RMSE results
+  trees = 0          # a place to dump required number of trees
+)
+
+# grid search
+for(i in seq_len(nrow(hyper_grid))) {
+  set.seed(123)
+  m <- xgb.cv(
+    data = X,
+    label = Y,
+    nrounds = 1000,#supposedly 4000
+    objective = "binary:logistic",
+    early_stopping_rounds = 50, 
+    nfold = 10,
+    verbose = 0,
+    params = list( 
+      eta = hyper_grid$eta[i], 
+      max_depth = hyper_grid$max_depth[i],
+      min_child_weight = hyper_grid$min_child_weight[i],
+      subsample = hyper_grid$subsample[i],
+      colsample_bytree = hyper_grid$colsample_bytree[i],
+      gamma = hyper_grid$gamma[i], 
+      lambda = hyper_grid$lambda[i], 
+      alpha = hyper_grid$alpha[i]
+    ) 
+  )
+  hyper_grid$logloss[i] <- min(m$evaluation_log$test_logloss_mean)
+  hyper_grid$trees[i] <- m$best_iteration
+}
+```
+
+```{r}
+# results
+hyper_grid %>%
+  filter(logloss > 0) %>%
+  arrange(logloss) %>%
+  glimpse()
+```
+
+```{r}
+# optimal parameter list
+params <- list(
+  eta = 0.01,
+  max_depth = 3,
+  min_child_weight = 3,
+  subsample = 0.5,
+  colsample_bytree = 0.5
+)
+```
+
+```{r}
+# 
+# # train final model
+# trainFinal$Institution=fct_recode(trainFinal$Institution, "1" = "A", "2" ="B","3"="C","4"="D")
+# trainFinal$Institution=as.numeric(trainFinal$Institution)
+# trainFinal=as.matrix(trainFinal)
+
+xgb.fit.final <- xgboost(
+  params = params,
+  data = X,
+  label = Y,
+  nrounds = 3944,
+  objective = "binary:logistic",
+  verbose = 0
+)
+```
+
+```{r}
+# Compute predicted probabilities on training data
+m1_prob <- predict(xgb.fit.final, X, type = "prob")
+
+# Compute AUC metrics for cv_model1,2 and 3 
+perf1 <- prediction(m1_prob,trainFinal$Failure.binary) %>%
+  performance(measure = "tpr", x.measure = "fpr")
+
+
+# Plot ROC curves for cv_model1,2 and 3 
+plot(perf1, col = "black", lty = 2)
+
+
+# ROC plot for training data
+roc( trainFinal$Failure.binary ~ m1_prob, plot=TRUE, legacy.axes=FALSE, 
+    percent=TRUE, col="black", lwd=2, print.auc=TRUE)
+
+xgb_prep <- recipe(Failure.binary ~ ., data = testFinal) %>%
+  step_integer(all_nominal()) %>%
+  prep(training = testFinal, retain = TRUE) %>%
+  juice()
+
+X <- as.matrix(xgb_prep[setdiff(names(xgb_prep), "Failure.binary")])
+
+# Compute predicted probabilities on training data
+m2_prob <- predict(xgb.fit.final, X, type = "prob")
+
+# Compute AUC metrics for cv_model1,2 and 3 
+perf2 <- prediction(m2_prob,testFinal$Failure.binary) %>%
+  performance(measure = "tpr", x.measure = "fpr")
+
+
+# Plot ROC curves for cv_model1,2 and 3 
+plot(perf2, col = "black", lty = 2)
+
+
+# ROC plot for training data
+roc( testFinal$Failure.binary ~ m2_prob, plot=TRUE, legacy.axes=FALSE, 
+    percent=TRUE, col="black", lwd=2, print.auc=TRUE)
+
+```
+
+```{r}
+# variable importance plot
+vip::vip(xgb.fit.final,num_features=20) 
+```

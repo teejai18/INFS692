@@ -1,0 +1,134 @@
+---
+title: "DATA REPROCESSING"
+author: "THEDION V. DIAM JR."
+date: "2022-12-16"
+output: pdf_document
+---
+
+# LOAD PACKAGES
+
+```{r}
+# Helper packages
+library(readr)    # loading dataset
+library(dplyr)    # for data wrangling
+library(ggplot2)  # for awesome graphics
+library(tidyverse)# for filtering 
+library(rsample)  # for creating validation splits
+library(bestNormalize) # for normalizing the dataset
+library(stringr)       # for string functionality
+library(gridExtra)     # for manipulaiting the grid
+
+# Modeling packages
+library(cluster)       # for general clustering algorithms
+library(factoextra)    # for visualizing cluster results
+library(ranger)     # a c++ implementation of random forest 
+library(h2o)        # a java-based implementation of random forest
+h2o.init()
+```
+
+# Load Data Sets
+The data contains 197 rows and 431 columns with *Failure.binary* binary output.
+```{r}
+library(readr)
+rawd <- read_csv("D:/DIAM/FP-DATA.csv")
+```
+
+
+#=================================================== Reprocessing the Raw Data ===================================================#
+```{r}
+library(tidyverse)
+library(bestNormalize)
+```
+
+# Check for null and missing values
+Using *anyNA()* function, We can determine if any missing values in our data.
+```{r}
+anyNA(rawd)
+
+#The result shows either *True* or *False*. If True, omit the missing values using *na.omit()*
+  
+#[1] FALSE
+
+#Thus, our data has no missing values.
+```
+
+# Check for Normality of the Data
+We used *Shapiro-Wilk's Test* to check the normality of the data.
+
+```{r,warning=F}
+rd <- rawd%>%select_if(is.numeric) 
+rd <- rd[,-1]
+test <- apply(rd,2,function(x){shapiro.test(x)})
+```
+
+
+To have the list of p-value of all variables, the *unlist()* function is used and convert a list to vector.
+```{r}
+pvalue_list <- unlist(lapply(test, function(x) x$p.value))
+```
+
+
+```{r}
+sum(pvalue_list<0.05)  # not normally distributed
+sum(pvalue_list>0.05)  # normally distributed
+test$Entropy_cooc.W.ADC
+
+# [1] 428
+# [1] 1
+
+#  Thus, we have 428 variables that are not normally distributed and Entropy_cooc.W.ADC is normally distributed.
+```
+
+We use *orderNorm()* function, the *x.t*	is the elements of orderNorm() function transformed original data.Using the *Shapiro-Wilk's Test*
+```{r,warning=F}
+TRDrawd=rawd[,c(3,5:length(names(rawd)))]
+
+TRDrawd=apply(TRDrawd,2,orderNorm)
+TRDrawd=lapply(TRDrawd, function(x) x$x.t)
+TRDrawd=TRDrawd%>%as.data.frame()
+test=apply(TRDrawd,2,shapiro.test)
+test=unlist(lapply(test, function(x) x$p.value))
+```
+
+#Testing Data 
+```{r,warning=F}
+sum(test <0.05)  # not normally distributed
+sum(test >0.05)  # normally distributed
+
+#[1] 0
+#[1] 428
+
+# Thus, our data is normally distributed.
+```
+
+
+```{r}
+rawd[,c(3,5:length(names(rawd)))]=TRDrawd
+```
+
+Get the correlation of the whole data expect the categorical variables
+```{r}
+CorMatrix=cor(rawd[,-c(1,2)])
+heatmap(CorMatrix,Rowv=NA,Colv=NA,scale="none",revC = T)
+```
+
+#Splitting the Data
+Split the data into training (80%) and testing (20%).
+```{r}
+rawd$Institution=as.factor(rawd$Institution)
+rawd$Failure.binary=as.factor(rawd$Failure.binary)
+```
+
+```{r}
+splitter <- sample(1:nrow(rawd), round(nrow(rawd) * 0.8))
+trainND <- rawd[splitter, ]
+testND  <- rawd[-splitter, ]
+```
+
+The data frame output of data reprocessing will be converted into to "csv", which will be used for entire project.
+
+# Load new Data 
+```{r}
+Final<-  read_csv("D:/DIAM/newdat.csv")
+View(Final)
+

@@ -1,0 +1,259 @@
+---
+title: "Model 1 - SVM"
+output: pDF_document
+---
+# Load Data Sets
+The data contains 197 rows and 431 columns with *Failure.binary* binary output.
+```{r}
+rawd <- read.csv("C:/Users/redee/OneDrive/Desktop/STAT 325 Final Project/FP DATA.csv")
+```
+
+
+#=================================================== Reprocessing the Raw Data ===================================================#
+```{r}
+library(tidyverse)
+library(bestNormalize)
+```
+
+# Check for null and missing values
+Using *anyNA()* function, We can determine if any missing values in our data.
+```{r}
+anyNA(rawd)
+
+#The result shows either *True* or *False*. If True, omit the missing values using *na.omit()*
+  
+#[1] FALSE
+
+#Thus, our data has no missing values.
+```
+
+# Check for Normality of the Data
+We used *Shapiro-Wilk's Test* to check the normality of the data.
+
+```{r,warning=F}
+rd <- rawd%>%select_if(is.numeric) 
+rd <- rd[,-1]
+test <- apply(rd,2,function(x){shapiro.test(x)})
+```
+
+
+To have the list of p-value of all variables, the *unlist()* function is used and convert a list to vector.
+```{r}
+pvalue_list <- unlist(lapply(test, function(x) x$p.value))
+```
+
+
+```{r}
+sum(pvalue_list<0.05)  # not normally distributed
+sum(pvalue_list>0.05)  # normally distributed
+test$Entropy_cooc.W.ADC
+
+# [1] 428
+# [1] 1
+
+#  Thus, we have 428 variables that are not normally distributed and Entropy_cooc.W.ADC is normally distributed.
+```
+
+We use *orderNorm()* function, the *x.t*	is the elements of orderNorm() function transformed original data.Using the *Shapiro-Wilk's Test*
+```{r,warning=F}
+TRDrawd=rawd[,c(3,5:length(names(rawd)))]
+
+TRDrawd=apply(TRDrawd,2,orderNorm)
+TRDrawd=lapply(TRDrawd, function(x) x$x.t)
+TRDrawd=TRDrawd%>%as.data.frame()
+test=apply(TRDrawd,2,shapiro.test)
+test=unlist(lapply(test, function(x) x$p.value))
+```
+
+#Testing Data 
+```{r,warning=F}
+sum(test <0.05)  # not normally distributed
+sum(test >0.05)  # normally distributed
+
+#[1] 0
+#[1] 428
+
+# Thus, our data is normally distributed.
+```
+
+
+```{r}
+rawd[,c(3,5:length(names(rawd)))]=TRDrawd
+```
+
+Get the correlation of the whole data expect the categorical variables
+```{r}
+CorMatrix=cor(rawd[,-c(1,2)])
+heatmap(CorMatrix,Rowv=NA,Colv=NA,scale="none",revC = T)
+```
+
+#Splitting the Data
+Split the data into training (80%) and testing (20%).
+```{r}
+rawd$Institution=as.factor(rawd$Institution)
+rawd$Failure.binary=as.factor(rawd$Failure.binary)
+```
+
+```{r}
+splitter <- sample(1:nrow(rawd), round(nrow(rawd) * 0.8))
+trainND <- rawd[splitter, ]
+testND  <- rawd[-splitter, ]
+```
+
+The data frame output of data reprocessing will be converted into to "csv", which will be used for entire project.
+```{r}
+# Helper packages
+library(dplyr)    # for data wrangling
+library(ggplot2)  # for awesome graphics
+library(rsample)  # for data splitting
+
+# Modeling packages
+library(caret)    # for classification and regression training
+library(kernlab)  # for fitting SVMs
+library(modeldata) #for Failure.binary data
+library(forcats)
+
+# Model interpretability packages
+library(pdp)      # for partial dependence plots, etc.
+library(vip)      # for variable importance plots
+```
+
+```{r}
+# DATA
+final<- read.csv("C:/Users/redee/OneDrive/Desktop/STAT 325 Final Project/newdat.csv")
+View(final)
+```
+#================================================ SVM ============================================#
+Support vector machines (SVMs) offer a direct approach to binary classification. The popular kernel function used by SVMs are Linear `"svmLinear"`, Polynomial Kernel `"svmPoly"` and Radial basis kernel `"svmRadial"`
+```{r}
+# Load Failure.binary data
+
+final$Failure.binary=as.factor(final$Failure.binary)
+
+# Create training (70%) and test (30%) sets
+set.seed(123)  # for reproducibility
+churn_split <- initial_split(final, prop = 0.8, strata = "Failure.binary")
+split_train <- training(churn_split)
+split_test  <- testing(churn_split)
+```
+
+
+```{r}
+# Linear (i.e., soft margin classifier)
+caret::getModelInfo("svmLinear")$svmLinear$parameters
+
+# Polynomial kernel
+caret::getModelInfo("svmPoly")$svmPoly$parameters
+
+# Radial basis kernel
+caret::getModelInfo("svmRadial")$svmRadial$parameters
+```
+
+# Run SVM Model in Training phase
+
+```{r}
+set.seed(1854)  # for reproducibility
+split_svm <- train(
+  Failure.binary ~ ., 
+  data = split_train,
+  method = "svmRadial",               
+  preProcess = c("center", "scale"),  
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10
+)
+```
+
+# Plot and print SVM model with with radial basis kernel.
+
+```{r}
+# Plot results
+ggplot(split_svm) + theme_light()
+
+# Print results
+split_svm$results
+```
+
+Control parameter
+
+```{r}
+class.weights = c("No" = 1, "Yes" = 10)
+
+# Control params for SVM
+ctrl <- trainControl(
+  method = "cv", 
+  number = 10, 
+  classProbs = TRUE,                 
+  summaryFunction = twoClassSummary  # also needed for AUC/ROC
+)
+
+split_train$Failure.binary=fct_recode(split_train$Failure.binary,No="0",Yes="1")
+
+```
+
+# Print the AUC values during Training
+
+```{r}
+# Tune an SVM
+set.seed(5628)  # for reproducibility
+train_svm_auc <- train(
+  Failure.binary ~ ., 
+  data = split_train,
+  method = "svmRadial",               
+  preProcess = c("center", "scale"),  
+  metric = "ROC",  # area under ROC curve (AUC)       
+  trControl = ctrl,
+  tuneLength = 10
+)
+
+# Print results
+train_svm_auc$results
+confusionMatrix(train_svm_auc)
+```
+
+# Print the Top 20 important features during Training
+
+```{r}
+prob_yes <- function(object, newdata) {
+  predict(object, newdata = newdata, type = "prob")[, "Yes"]
+}
+
+# Variable importance plot
+set.seed(2827)  # for reproducibility
+vip(train_svm_auc, method = "permute", nsim = 5, train = split_train, 
+    target = "Failure.binary", metric = "auc", reference_class = "Yes", 
+    pred_wrapper = prob_yes)
+```
+
+
+```{r}
+features <- setdiff(names(final), names(final)[c(1,2)])
+pdps <- lapply(features, function(x) {
+  partial(train_svm_auc, pred.var = x, which.class = 2,  
+          prob = TRUE, plot = TRUE, plot.engine = "ggplot2") +
+    coord_flip()
+})
+
+grid.arrange(grobs = pdps,  ncol = 2)
+```
+
+# Print the AUC values during Testing
+
+```{r}
+split_test$Failure.binary=fct_recode(split_test$Failure.binary,No="0",Yes="1")
+
+# Tune an SVM with radial 
+set.seed(5628)  # for reproducibility
+test_svm_auc <- train(
+  Failure.binary ~ ., 
+  data = split_test,
+  method = "svmRadial",               
+  preProcess = c("center", "scale"),  
+  metric = "ROC",  # area under ROC curve (AUC)       
+  trControl = ctrl,
+  tuneLength = 10
+)
+
+# Print results
+test_svm_auc$results
+confusionMatrix(test_svm_auc)
+```
