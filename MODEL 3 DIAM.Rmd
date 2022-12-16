@@ -1,0 +1,333 @@
+---
+title: "MODEL 3"
+author: "THEDION V. DIAM JR."
+date: "2022-12-13"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Load Data Sets
+The data contains 197 rows and 431 columns with *Failure.binary* binary output.
+```{r}
+rawd <- read.csv("C:/Users/redee/OneDrive/Desktop/STAT 325 Final Project/FP DATA.csv")
+```
+
+
+#============================ Reprocessing the Raw Data ==================================#
+```{r}
+library(tidyverse)
+library(bestNormalize)
+```
+
+# Check for null and missing values
+Using *anyNA()* function, We can determine if any missing values in our data.
+```{r}
+anyNA(rawd)
+
+#The result shows either *True* or *False*. If True, omit the missing values using *na.omit()*
+  
+#[1] FALSE
+
+#Thus, our data has no missing values.
+```
+
+# Check for Normality of the Data
+We used *Shapiro-Wilk's Test* to check the normality of the data.
+
+```{r,warning=F}
+rd <- rawd%>%select_if(is.numeric) 
+rd <- rd[,-1]
+test <- apply(rd,2,function(x){shapiro.test(x)})
+```
+
+
+To have the list of p-value of all variables, the *unlist()* function is used and convert a list to vector.
+```{r}
+pvalue_list <- unlist(lapply(test, function(x) x$p.value))
+```
+
+
+```{r}
+sum(pvalue_list<0.05)  # not normally distributed
+sum(pvalue_list>0.05)  # normally distributed
+test$Entropy_cooc.W.ADC
+
+# [1] 428
+# [1] 1
+
+#  Thus, we have 428 variables that are not normally distributed and Entropy_cooc.W.ADC is normally distributed.
+```
+
+We use *orderNorm()* function, the *x.t*	is the elements of orderNorm() function transformed original data.Using the *Shapiro-Wilk's Test*
+```{r,warning=F}
+TRDrawd=rawd[,c(3,5:length(names(rawd)))]
+
+TRDrawd=apply(TRDrawd,2,orderNorm)
+TRDrawd=lapply(TRDrawd, function(x) x$x.t)
+TRDrawd=TRDrawd%>%as.data.frame()
+test=apply(TRDrawd,2,shapiro.test)
+test=unlist(lapply(test, function(x) x$p.value))
+```
+
+#Testing Data 
+```{r,warning=F}
+sum(test <0.05)  # not normally distributed
+sum(test >0.05)  # normally distributed
+
+#[1] 0
+#[1] 428
+
+# Thus, our data is normally distributed.
+```
+
+
+```{r}
+rawd[,c(3,5:length(names(rawd)))]=TRDrawd
+```
+
+Get the correlation of the whole data expect the categorical variables
+```{r}
+CorMatrix=cor(rawd[,-c(1,2)])
+heatmap(CorMatrix,Rowv=NA,Colv=NA,scale="none",revC = T)
+```
+
+#Splitting the Data
+Split the data into training (80%) and testing (20%).
+```{r}
+rawd$Institution=as.factor(rawd$Institution)
+rawd$Failure.binary=as.factor(rawd$Failure.binary)
+```
+
+```{r}
+splitter <- sample(1:nrow(rawd), round(nrow(rawd) * 0.8))
+trainND <- rawd[splitter, ]
+testND  <- rawd[-splitter, ]
+```
+
+The data frame output of data reprocessing will be converted into to "csv", which will be used for entire project.
+
+# Load Final Data 
+```{r}
+FD<- read.csv("C:/Users/redee/OneDrive/Desktop/STAT 325 Final Project/newdat.csv")
+View(FD)
+```
+
+# Helper Packages And Modeling Packages
+```{r}
+library(dplyr)    
+library(ggplot2)   
+library(stringr)  
+library(cluster)    
+library(factoextra)
+library(gridExtra)  
+library(tidyverse)
+library(readr)
+library(mclust)
+```
+
+#QUESTION: Compare the following clustering technique results:
+# 1. K-means
+# 2. Hierarchical 
+# 3. Model Based
+
+
+#------------------------------ K-MEANS CLUSTERING --------------------------------#
+# Load Final Data 
+```{r}
+FD<- read.csv("C:/Users/redee/OneDrive/Desktop/STAT 325 Final Project/newdat.csv")
+View(FD)
+```
+
+```{r}
+FD = FD[,-1]
+```
+
+#  K-means cluster = 2
+```{r}
+clusters <- kmeans(FD, centers = 2, iter.max = 100, nstart = 100)
+
+# [1] Based on the results, the 2 K-means clusters is of sizes 47 and 150 have Within cluster sum of squares of 42691, 13415 respectively.
+```
+
+# Plot the 2 K-Means clusters
+To plot the 3 clusters, use *fviz_cluster()* function.
+```{r}
+
+fviz_cluster(kmeans(FD, centers = 2, iter.max = 100, nstart = 100), data = FD)
+```
+
+#  K-means cluster = 3
+```{r}
+
+kme<- kmeans(FD, centers = 3, iter.max = 100, nstart = 100)
+
+# [1] Based on the results, the 3 K-means clusters is of sizes 50,44, 103 have Within cluster sum of squares of 13415, 10410, 24994 respectively. 
+
+```
+
+```{r}
+kme$betweenss/kme$totss
+
+# [1] 0.4190 or 41.90%
+```
+# plot the 3 K-Means clusters
+To plot the 3 clusters, use *fviz_cluster()* function.
+```{r}
+fviz_cluster(kme, data = FD)
+```
+
+
+# determine and visualize optimal number of clusters
+Using **Within Sum of Squares**, **Silhouette** and **gap_stat** plots, are another method to determine the optimal value of K number of clusters. It suggest with 2 clusters.
+
+```{r}
+fviz_nbclust(FD, kmeans, method = "wss") 
+fviz_nbclust(FD, kmeans, method = "silhouette")
+fviz_nbclust(FD, kmeans, method = "gap_stat") 
+
+```
+
+
+#The quality of a k-means partition. The quality of the partition is
+```{r}
+clusters$betweenss / clusters$totss
+
+# [1] .3322 or 33.22%
+```
+
+
+#---------------Heirarchical Clustering------------------#
+
+There is another method in clustering aside from k-means to identify the grouping of the data which is the hierarchical clustering. We can visualized its results thru 'dendrogram'. 
+```{r}
+FPD <- FD%>%
+  select_if(is.numeric) %>%  # select numeric columns
+  select(-Failure.binary) %>%    # remove target column
+  mutate_all(as.double) %>%  # coerce to double type
+  scale()
+data <- dist(FPD, method = "euclidean")
+
+```
+
+# Hierarchical clustering using Complete Linkage
+
+To perform **Agglomerative HC**, we first compute the dissimilarity values with `dist()` and then feed these values into `hclust()`  the agglomeration method we can used.`"ward.D"`, `"ward.D2"`, `"single"`, `"complete"`, `"average"`.
+```{r}
+hc1 <- hclust(data, method = "complete")
+plot(hc1, cex = 0.6)
+rect.hclust(hc1, k = 2, border = 1:4)
+```
+#AGNES
+```{r}
+set.seed(123)
+hc2 <- agnes(FPD, method = "complete")
+hc2$ac
+
+# [1] The AC value is 0.8076961 which is closed to 1.
+```
+#DIANA
+```{r}
+hc4 <- diana(FPD)
+hc4$dc
+
+p1 <- fviz_nbclust(FPD, FUN = hcut, method = "wss", 
+                   k.max = 10) +
+  ggtitle("(A) Elbow method")
+p2 <- fviz_nbclust(FPD, FUN = hcut, method = "silhouette", 
+                   k.max = 10) +
+  ggtitle("(B) Silhouette method")
+p3 <- fviz_nbclust(FPD, FUN = hcut, method = "gap_stat", 
+                   k.max = 10) +
+  ggtitle("(C) Gap statistic")
+gridExtra::grid.arrange(p1, p2, p3, nrow = 1)
+
+# Based on the plot, the Elbow and Silhouette methods seems to suggest 2 clusters, while the Gap Statistics suggest 9 clusters. The wonderful thing about hierarchical clustering is that it gives us a complete dendrogram that shows the connections between the clusters in our data.
+```
+# Ward's method
+```{r}
+hc6 <- hclust(data, method = "ward.D2" )
+sub_grp <- cutree(hc6, k = 8)
+table(sub_grp)
+```
+
+#--------------Model Based---------------#
+Model Based automatically determines the ideal number of clusters.
+```{r}
+MD <- Mclust(FD[,1:10], G=3) 
+summary(MD)
+MDT = Mclust(FD, 1:9)  
+
+summary(MDT)
+
+```
+# Plot results 
+```{r}
+plot(MD, what = "density") 
+```
+```{r}
+plot(MD, what = "uncertainty")
+```
+
+
+```{r}
+legend_args <- list(x = "bottomright", ncol = 5)
+plot(MD, what = 'BIC', legendArgs = legend_args)
+plot(MD, what = 'classification')
+plot(MD, what = 'uncertainty')
+```
+
+```{r}
+probabilities <- MD$z 
+colnames(probabilities) <- paste0('C', 1:3)
+```
+
+```{r}
+probabilities <- probabilities %>%
+  as.data.frame() %>%
+  mutate(id = row_number()) %>%
+  tidyr::gather(cluster, probability, -id)
+```
+
+```{r}
+ggplot(probabilities, aes(probability)) +
+  geom_histogram() +
+  facet_wrap(~ cluster, nrow = 2)
+```
+
+```{r}
+uncertainty <- data.frame(
+  id = 1:nrow(FD),
+  cluster = MD$classification,
+  uncertainty = MD$uncertainty
+)
+```
+
+```{r}
+uncertainty %>%
+  group_by(cluster) %>%
+  filter(uncertainty > 0.25) %>%
+  ggplot(aes(uncertainty, reorder(id, uncertainty))) +
+  geom_point() +
+  facet_wrap(~ cluster, scales = 'free_y', nrow = 1)
+```
+
+```{r}
+clT <- FD %>%
+  scale() %>%
+  as.data.frame() %>%
+  mutate(cluster = MD$classification) %>%
+  filter(cluster == 2) %>%
+  select(-cluster)
+```
+
+```{r}
+clT %>%
+  tidyr::gather(product, std_count) %>%
+  group_by(product) %>%
+  summarize(avg = mean(std_count)) %>%
+  ggplot(aes(avg, reorder(product, avg))) +
+  geom_point() +
+  labs(x = "Average standardized consumption", y = NULL)
+```
+
